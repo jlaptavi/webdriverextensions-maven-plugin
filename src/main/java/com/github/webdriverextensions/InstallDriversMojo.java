@@ -159,6 +159,7 @@ public class InstallDriversMojo extends AbstractMojo {
             DriverDownloader driverDownloader = new DriverDownloader(this);
             DriverExtractor driverExtractor = new DriverExtractor(this);
             DriverInstaller driverInstaller = new DriverInstaller(this);
+            DriverPathPropertyLoader driverPathPropertyLoader = new DriverPathPropertyLoader(this);
 
             cleanupTempDirectory();
             for (Driver _driver : drivers) {
@@ -177,6 +178,8 @@ public class InstallDriversMojo extends AbstractMojo {
                     getLog().info("  Already installed");
                 }
             }
+            getLog().info( "Setting System Properties for Selenium Drivers Paths");
+            driverPathPropertyLoader.setDriverPaths();
         }
     }
 
