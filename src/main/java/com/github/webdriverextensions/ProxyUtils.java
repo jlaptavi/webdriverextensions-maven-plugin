@@ -19,7 +19,7 @@ public class ProxyUtils {
         return new HttpHost(proxySettings.getHost(), proxySettings.getPort());
     }
 
-    static CredentialsProvider createProxyCredentialsFromSettings(Proxy proxySettings) throws MojoExecutionException {
+    public static CredentialsProvider createProxyCredentialsFromSettings(Proxy proxySettings) throws MojoExecutionException {
         if (proxySettings.getUsername() == null) {
             return null;
         }

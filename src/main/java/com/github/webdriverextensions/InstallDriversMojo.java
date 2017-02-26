@@ -169,9 +169,9 @@ public class InstallDriversMojo extends AbstractMojo {
                 }
                 getLog().info(driver.getId() + " version " + driver.getVersion());
                 if (driverInstaller.needInstallation(driver)) {
-                    Path downloadPath = downloadDirectory.resolve(driver.getDriverDownloadDirectoryName());
-                    Path downloadLocation = driverDownloader.downloadFile(driver, downloadPath);
-                    Path extractLocation = driverExtractor.extractDriver(driver, downloadLocation);
+                    Path downloadDirectory = this.downloadDirectory.resolve(driver.getDriverDownloadDirectoryName());
+                    Path downloadedFile = driverDownloader.downloadFile(driver, downloadDirectory);
+                    Path extractLocation = driverExtractor.extractDriver(driver, downloadedFile);
                     driverInstaller.install(driver, extractLocation);
                     if (!keepDownloadedWebdrivers) {
                         cleanupDownloadsDirectory();

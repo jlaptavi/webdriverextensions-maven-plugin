@@ -1,80 +1,56 @@
 package com.github.webdriverextensions;
 
+import com.github.webdriverextensions.newversion.FileDownloader;
+import com.github.webdriverextensions.newversion.FileDownloaderImpl;
 import org.apache.commons.io.FileUtils;
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpHost;
-import org.apache.http.client.CredentialsProvider;
-import org.apache.http.client.config.CookieSpecs;
-import org.apache.http.client.config.RequestConfig;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.config.SocketConfig;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.DefaultHttpRequestRetryHandler;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.impl.client.HttpClients;
 import org.apache.maven.plugin.MojoExecutionException;
-import org.apache.maven.settings.Proxy;
 
 import java.io.IOException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 
 import static com.github.webdriverextensions.Utils.quote;
-import static org.apache.commons.io.FileUtils.copyInputStreamToFile;
 
 public class DriverDownloader {
 
-    public static final int FILE_DOWNLOAD_READ_TIMEOUT = 30 * 60 * 1000; // 30 min
-    public static final int FILE_DOWNLOAD_CONNECT_TIMEOUT = 30 * 1000; // 30 seconds
-    public static final int FILE_DOWNLOAD_RETRY_ATTEMPTS = 3;
     private final InstallDriversMojo mojo;
-    private final Proxy proxySettings;
+    private final FileDownloader fileDownloader;
 
     public DriverDownloader(InstallDriversMojo mojo) throws MojoExecutionException {
         this.mojo = mojo;
-        this.proxySettings = ProxyUtils.getProxyFromSettings(mojo);
+        this.fileDownloader = new FileDownloaderImpl(ProxyUtils.getProxyFromSettings(mojo));
     }
 
     public Path downloadFile(Driver driver, Path downloadDirectory) throws MojoExecutionException {
-
-        String url = driver.getUrl();
-        Path downloadFilePath = downloadDirectory.resolve(driver.getFilenameFromUrl());
-
-        if (downloadFilePath.toFile().exists() && !downloadCompletedFileExists(downloadDirectory)) {
-            mojo.getLog().info("  Removing downloaded driver " + quote(downloadFilePath) + " since it may be corrupt");
-            cleanupDriverDownloadDirectory(downloadDirectory);
-        } else if (!mojo.keepDownloadedWebdrivers) {
-            cleanupDriverDownloadDirectory(downloadDirectory);
-        }
-
-        if (downloadFilePath.toFile().exists()) {
-            mojo.getLog().info("  Using cached driver from " + quote(downloadFilePath));
-        } else {
-            mojo.getLog().info("  Downloading " + quote(url) + " to " + quote(downloadFilePath));
-            HttpClientBuilder httpClientBuilder = prepareHttpClientBuilderWithTimeoutsAndProxySettings(proxySettings);
-            httpClientBuilder.setRetryHandler(new DefaultHttpRequestRetryHandler(FILE_DOWNLOAD_RETRY_ATTEMPTS, true));
-            try (CloseableHttpClient httpClient = httpClientBuilder.build()) {
-                try (CloseableHttpResponse fileDownloadResponse = httpClient.execute(new HttpGet(url))) {
-                    HttpEntity remoteFileStream = fileDownloadResponse.getEntity();
-                    copyInputStreamToFile(remoteFileStream.getContent(), downloadFilePath.toFile());
-                    if (driverFileIsCorrupt(downloadFilePath)) {
-                        printXmlFileContetIfPresentInDonwloadedFile(downloadFilePath);
-                        cleanupDriverDownloadDirectory(downloadDirectory);
-                        throw new InstallDriversMojoExecutionException("Failed to download a non corrupt driver", mojo, driver);
-                    }
-                }
-            } catch (InstallDriversMojoExecutionException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new InstallDriversMojoExecutionException("Failed to download driver from " + quote(url) + " to " + quote(downloadFilePath) + " cause of " + e.getCause(), e, mojo, driver);
+        try {
+            if (!mojo.keepDownloadedWebdrivers) {
+                cleanupDriverDownloadDirectory(downloadDirectory);
             }
-            createDownloadCompletedFile(downloadDirectory);
+
+            if (mojo.keepDownloadedWebdrivers && fileDownloader.isDownloaded(driver.getUrl(), downloadDirectory)) {
+                Path downloadedFile = fileDownloader.getDownloadedFile(driver.getUrl(), downloadDirectory);
+                mojo.getLog().info("  Using cached driver from " + quote(downloadedFile));
+                return downloadedFile;
+            } else {
+                mojo.getLog().info("  Downloading " + quote(driver.getUrl()) + " to " + quote(downloadDirectory));
+                Path downloadedFile = fileDownloader.downloadFile(driver.getUrl(), downloadDirectory);
+                if (driverFileIsCorrupt(downloadedFile)) {
+                    printXmlFileContetIfPresentInDonwloadedFile(downloadedFile);
+                    cleanupDriverDownloadDirectory(downloadDirectory);
+                    throw new InstallDriversMojoExecutionException("Failed to download a non corrupt driver", mojo, driver);
+                }
+                return downloadedFile;
+            }
+        } catch (Exception e) {
+            if (e instanceof InstallDriversMojoExecutionException) {
+                throw (InstallDriversMojoExecutionException) e;
+            } else {
+                throw new InstallDriversMojoExecutionException("Failed to download driver from " + quote(driver.getUrl()) + " cause of " + e.getCause(), e, mojo, driver);
+            }
         }
-        return downloadFilePath;
     }
 
     private void printXmlFileContetIfPresentInDonwloadedFile(Path downloadFilePath) {
@@ -89,26 +65,6 @@ public class DriverDownloader {
         } catch (Exception e) {
             // no file  or file content to read
         }
-    }
-
-    private HttpClientBuilder prepareHttpClientBuilderWithTimeoutsAndProxySettings(Proxy proxySettings) throws MojoExecutionException {
-        SocketConfig socketConfig = SocketConfig.custom().setSoTimeout(FILE_DOWNLOAD_READ_TIMEOUT).build();
-        RequestConfig requestConfig = RequestConfig.custom().setConnectTimeout(FILE_DOWNLOAD_CONNECT_TIMEOUT)
-                .setCookieSpec(CookieSpecs.IGNORE_COOKIES).build();
-        HttpClientBuilder httpClientBuilder = HttpClients.custom();
-        httpClientBuilder
-                .setDefaultSocketConfig(socketConfig)
-                .setDefaultRequestConfig(requestConfig)
-                .disableContentCompression();
-        HttpHost proxy = ProxyUtils.createProxyFromSettings(proxySettings);
-        if (proxy != null) {
-            httpClientBuilder.setProxy(proxy);
-            CredentialsProvider proxyCredentials = ProxyUtils.createProxyCredentialsFromSettings(proxySettings);
-            if (proxyCredentials != null) {
-                httpClientBuilder.setDefaultCredentialsProvider(proxyCredentials);
-            }
-        }
-        return httpClientBuilder;
     }
 
     private boolean driverFileIsCorrupt(Path downloadFilePath) {
@@ -132,21 +88,6 @@ public class DriverDownloader {
         } catch (IOException e) {
             throw new InstallDriversMojoExecutionException("Failed to delete driver cache directory:" + System.lineSeparator()
                     + Utils.directoryToString(downloadDirectory), e);
-        }
-    }
-
-    private boolean downloadCompletedFileExists(Path downloadDirectory) {
-        Path downloadCompletedFile = downloadDirectory.resolve("download.completed");
-        return downloadCompletedFile.toFile().exists();
-    }
-
-    private void createDownloadCompletedFile(Path downloadDirectory) throws InstallDriversMojoExecutionException {
-        Path downloadCompletedFile = downloadDirectory.resolve("download.completed");
-        try {
-            Files.createFile(downloadCompletedFile);
-        } catch (IOException e) {
-            throw new InstallDriversMojoExecutionException("Failed to create download.completed file at " + downloadCompletedFile, e);
-
         }
     }
 }
